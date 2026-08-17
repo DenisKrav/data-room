@@ -7,6 +7,7 @@ import { CommonModule } from './common/common.module';
 import { DataRoomsModule } from './data-rooms/data-rooms.module';
 import { FilesModule } from './files/files.module';
 import { FoldersModule } from './folders/folders.module';
+import { HealthController } from './health.controller';
 import { PrismaModule } from './prisma/prisma.module';
 import { SharesModule } from './shares/shares.module';
 import { StorageModule } from './storage/storage.module';
@@ -23,6 +24,7 @@ import { StorageModule } from './storage/storage.module';
     FilesModule,
     SharesModule,
   ],
+  controllers: [HealthController],
   providers: [
     {
       provide: APP_GUARD,
