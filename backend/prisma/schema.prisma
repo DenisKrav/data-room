@@ -1,0 +1,177 @@
+// Data Room MVP — Prisma schema
+// See README.md for ERD diagram and "how it scales" notes.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String
+  name          String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  dataRooms     DataRoom[]
+  shares        Share[]
+  shareGrants   ShareGrant[]
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  replacedBy String?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model DataRoom {
+  id      String @id @default(uuid())
+  name    String
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  // Nullable only to break the DataRoom<->Folder creation cycle: the row is created
+  // without it, the root Folder is created referencing this DataRoom, then this
+  // field is set — all inside one transaction, so it is always non-null once the
+  // transaction commits and callers can treat it as required.
+  rootFolderId String? @unique
+  rootFolder   Folder? @relation("RootFolder", fields: [rootFolderId], references: [id])
+  folders      Folder[] @relation("DataRoomFolders")
+  files        File[]
+  shares       Share[]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([ownerId])
+  @@map("data_rooms")
+}
+
+model Folder {
+  id         String   @id @default(uuid())
+  name       String
+  dataRoomId String
+  dataRoom   DataRoom @relation("DataRoomFolders", fields: [dataRoomId], references: [id], onDelete: Cascade)
+  parentId   String?
+  parent     Folder?  @relation("FolderChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children   Folder[] @relation("FolderChildren")
+
+  // Ancestor folder ids from root to (excluding) this folder — root folder has path = [].
+  // Used for breadcrumbs, descendant lookups on delete/move, and share-inheritance checks.
+  path String[] @default([])
+
+  // Denormalized aggregates over the whole subtree (descendants only, not this folder itself).
+  // Updated incrementally on create/delete/move — see README "how it scales".
+  fileCount   Int    @default(0)
+  folderCount Int    @default(0)
+  totalSize   BigInt @default(0)
+
+  files     File[]
+  asRoot    DataRoom? @relation("RootFolder")
+  shares    Share[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([parentId, name])
+  @@index([dataRoomId, parentId])
+  @@map("folders")
+}
+
+model File {
+  id         String   @id @default(uuid())
+  name       String
+  folderId   String
+  folder     Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  dataRoomId String
+  dataRoom   DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+
+  storageKey String // object path inside the Supabase Storage bucket
+  mimeType   String
+  sizeBytes  BigInt
+
+  shares    Share[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([folderId, name])
+  @@index([folderId])
+  @@index([dataRoomId])
+  @@map("files")
+}
+
+enum ShareResourceType {
+  DATA_ROOM
+  FOLDER
+  FILE
+}
+
+enum ShareMode {
+  PUBLIC_LINK
+  PERMISSIONED
+}
+
+// Single role today; extensible to EDITOR later without a schema remodel — see README.
+enum ShareRole {
+  VIEWER
+}
+
+model Share {
+  id           String            @id @default(uuid())
+  resourceType ShareResourceType
+
+  dataRoomId String?
+  dataRoom   DataRoom? @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
+  folderId   String?
+  folder     Folder?   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  fileId     String?
+  file       File?     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  ownerId String
+  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  mode  ShareMode
+  token String?   @unique // present only when mode = PUBLIC_LINK
+
+  grants ShareGrant[]
+
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  @@index([dataRoomId])
+  @@index([folderId])
+  @@index([fileId])
+  @@map("shares")
+}
+
+model ShareGrant {
+  id      String @id @default(uuid())
+  shareId String
+  share   Share  @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  role      ShareRole @default(VIEWER)
+  createdAt DateTime  @default(now())
+
+  @@unique([shareId, userId])
+  @@index([userId])
+  @@map("share_grants")
+}
