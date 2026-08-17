@@ -66,6 +66,71 @@ There is exactly one rendering path for viewing a file: a dedicated page (`/room
 
 `frontend/src/components/browser/list-row.tsx` (`ListRow`) is the one presentational row shell used by the folder browser (`FolderRow`, `FileRow`) and the "Shared with me" list (`SharedItemCard`) — same icon/title/subtitle layout, only the trailing actions differ (owner dropdown vs. nothing). Add new item-list UI through this component rather than re-styling a row from scratch.
 
+## Conventions — where new code goes
+
+### Backend: one folder per resource, under `backend/src/`
+
+Follow the shape of `folders/`, `files/`, `data-rooms/`, `shares/` for any new resource:
+
+```
+<resource>/
+  dto/                        one class per file, kebab-case filename → PascalCase class
+                               (create-folder.dto.ts → CreateFolderDto), class-validator decorators only
+  <resource>.controller.ts    routes + @CurrentUser()/@Public(), no business logic
+  <resource>.service.ts       business logic, calls PermissionsService for every access check
+  <resource>.module.ts        wires controller + service(s), imported into app.module.ts
+```
+
+Extra services that don't fit "the" service for a resource get their own file in the same folder (`folder-aggregates.service.ts`, `folder-listing.service.ts`) rather than being crammed into the main service or a generic `utils.ts`.
+
+Cross-cutting stuff goes in `common/` (`PermissionsService`, `name-conflict.util.ts`) — not duplicated per-module. Auth-specific pieces (`guards/`, `decorators/`, `strategies/`, `types/`) live under `auth/`, not `common/`, since nothing outside auth constructs a JWT strategy or reads `@CurrentUser()`.
+
+Rules that hold for every resource module:
+- Every endpoint that reads or writes a folder/file/data room goes through `PermissionsService.assertFolderAccess` / `assertFileAccess` / `assertDataRoomAccess` — never a raw `prisma.folder.findUnique` ownership check inlined in a controller or service.
+- DTOs validate input; don't hand-roll `if (!x) throw new BadRequestException(...)` for things `class-validator` already covers.
+- Anything that changes a file/folder's existence, name, or parent must update `Folder` subtree aggregates via `FolderAggregatesService.applyDelta` in the same transaction — see the Architecture section above.
+
+### Frontend: route files stay thin, logic lives in `components/`
+
+```
+src/app/**/page.tsx          routing + 'use client' + useParams()/useRouter() only —
+                               delegates to a component immediately, no business logic inline
+src/components/<domain>/     grouped by feature: browser, rooms, share, shared-with-me,
+                               public-share, layout, common — mirrors the app/ route it serves
+src/components/ui/            shadcn primitives ONLY (see below) — nothing hand-written here
+src/lib/api/<resource>.ts     one file per backend resource; thin functions returning typed
+                               promises, always through the shared `api` axios instance
+src/lib/types.ts              TS interfaces mirroring backend response shapes
+src/lib/*-store.ts            zustand stores for state that spans components (auth-store,
+                               section-store) — not React Context, not prop drilling
+```
+
+Rules:
+- Server state (anything from the API) goes through TanStack Query (`useQuery`/`useMutation`) calling a `lib/api/*` function — never a raw `fetch`/`axios` call inside a component, never data-fetching `useEffect`.
+- Every new item-list row (files, folders, shared items, anything with an icon + title + subtitle) goes through `ListRow` (`components/browser/list-row.tsx`) — don't build a new bespoke flex row.
+- Forms are plain controlled `useState` + a submit handler (see `login/page.tsx`, `create-room-dialog.tsx`) — this project deliberately has no `react-hook-form`/`zod` dependency; client-side validation is minimal (`required`, `minLength` on the `<input>`) and the real validation is the backend's `class-validator` DTOs, surfaced via `getApiErrorMessage` + a `sonner` toast on failure.
+
+## Tech stack — use these, don't introduce alternatives
+
+Stick to what's already installed; don't add a second library that does the same job.
+
+| Concern | Use | Not |
+|---|---|---|
+| UI components | shadcn/ui — `npx shadcn add <name>` from `frontend/`, then edit the generated file if needed | MUI, Chakra, Ant Design, a hand-rolled component when shadcn already has one |
+| Icons | `lucide-react` | inline SVG, another icon set |
+| Server state (API data) | TanStack Query | SWR, raw `useEffect` + `fetch` |
+| Cross-component client state | Zustand (`lib/*-store.ts`) | Redux, React Context as a store |
+| HTTP client | the shared `api` instance in `lib/api/client.ts` (axios, handles the auth header + silent refresh) | a new axios instance per file, raw `fetch` |
+| Forms | controlled `useState` | react-hook-form, formik (not installed — don't add them for a one-off form) |
+| Toasts/notifications | `sonner` (`toast.success`/`toast.error`) | a custom toast component |
+| Styling | Tailwind utility classes | CSS modules, styled-components, inline `style={}` beyond one-offs |
+| ORM | Prisma | raw SQL in application code (a documented backfill/audit script is the only exception — see README "how it scales") |
+| Backend validation | class-validator/class-transformer DTOs + the global `ValidationPipe` | manual `if` checks in a service for anything a DTO decorator already covers |
+| File storage | Supabase Storage via `StorageService` | writing to local disk, another storage provider |
+| Auth | the existing JWT access + rotating refresh-cookie flow (`auth/`) | swapping in session-based auth, NextAuth, Supabase Auth |
+
+`date-fns` is in `frontend/package.json` but not actually used anywhere — don't treat its presence as license to reach for it; the two formatting helpers that exist (`formatBytes`, `formatItemCount` in `lib/format.ts`) are hand-rolled on purpose, and if a real date-formatting need comes up, prefer plain `Intl.DateTimeFormat` before adding it back as a real dependency.
+
 ## Deployment
 
 - Backend: Render, configured via `render.yaml` at the repo root (Blueprint). `rootDir: backend`. Build installs devDependencies explicitly (`npm install --include=dev`) because `NODE_ENV=production` otherwise skips them — that's where `@nestjs/cli` lives, and the build breaks without it.
