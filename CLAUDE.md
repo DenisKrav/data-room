@@ -34,6 +34,8 @@ Both dev servers must run simultaneously (two terminals) for the app to work end
 
 **Windows gotcha**: `nest start --watch` holds a lock on the generated Prisma query engine DLL. Running `prisma migrate`/`generate` while it's still running fails with `EPERM`. Kill the node process (or stop the dev server) first, then migrate, then restart.
 
+**Never enable `previewFeatures = ["postgresqlExtensions"]`** in `schema.prisma`. It makes `prisma migrate dev` track every Postgres extension present in the database — including ones Supabase installs by default (`pgcrypto`, `pg_stat_statements`, `supabase_vault`, `uuid-ossp`) that this project never created. The first `migrate dev`/`--create-only` run after enabling it reports those as drift and prompts a full destructive schema reset. If a migration needs a `type`/`ops` index (e.g. the `pg_trgm` `GIN` index on `File.name`), that syntax works fine *without* the preview feature — only `extensions = [...]` tracking in the datasource block needs it, and this project deliberately doesn't use that. Create extensions via a plain `CREATE EXTENSION IF NOT EXISTS ...` in the migration SQL instead (see the `search_index_and_backfill` migration for the pattern), and expect `prisma migrate dev` to always want to hand-review any migration touching that index — that's expected, not drift.
+
 There is no automated test suite yet (`jest`/`test:e2e` are configured but empty) — everything was verified manually against the real Supabase-backed dev server (`curl` for the API, Playwright for the browser) during development.
 
 ## Architecture
@@ -61,6 +63,12 @@ Access tokens are short-lived JWTs (15 min), kept in memory on the client only (
 ### File viewing
 
 There is exactly one rendering path for viewing a file: a dedicated page (`/rooms/:roomId/files/:fileId`, or the public equivalent under `/share/:token/files/:fileId`), not a modal. This exists because a file shared on its own (no folder access granted) has nowhere to open into if the only entry point is a modal launched from inside a folder listing — see `frontend/src/app/rooms/[roomId]/files/[fileId]/page.tsx`. Folder browsing (owned, public-link, or shared) all link into this same page rather than each having their own viewer.
+
+### File versions and search
+
+Uploading a name that exactly matches an existing file in the same folder creates a `FileVersion` row and updates `File`'s own `storageKey`/`mimeType`/`sizeBytes` to match — it does **not** go through `resolveConflictFreeName`. `File` always mirrors the latest version so every other read path (listing, view, aggregates) is untouched by this; only `FilesService.upload`/`remove` (cleanup must delete every version's blob) and the folder-aggregate delta (`totalSizeDelta` is `newSize - oldSize`, `fileCountDelta` is 0) know versions exist. Rename/move conflicts still auto-suffix — versioning is specifically an *upload into the same slot* behavior, not a generic name-collision resolution.
+
+File-name search (`FilesService.searchInDataRoom`) is scoped to one Data Room and matches anywhere in its subtree, not just the current folder — see the Windows/Prisma gotcha above before touching the `pg_trgm` index it depends on.
 
 ### Shared row UI
 

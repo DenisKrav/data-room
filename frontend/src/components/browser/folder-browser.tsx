@@ -29,6 +29,7 @@ import {
 import { FolderBreadcrumbs } from './breadcrumbs';
 import { CreateFolderDialog } from './create-folder-dialog';
 import { FileRow } from './file-row';
+import { FileSearchBox } from './file-search-box';
 import { FolderRow } from './folder-row';
 import { MoveDialog } from './move-dialog';
 import { UploadQueuePanel } from './upload-queue-panel';
@@ -173,7 +174,8 @@ export function FolderBrowser({ dataRoomId, folderId }: FolderBrowserProps) {
         }}
       />
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <FolderBreadcrumbs
           items={data.breadcrumb}
           hrefFor={(id) => `/rooms/${dataRoomId}/folders/${id}`}
@@ -204,6 +206,8 @@ export function FolderBrowser({ dataRoomId, folderId }: FolderBrowserProps) {
           </Button>
         </div>
         )}
+      </div>
+      <FileSearchBox dataRoomId={dataRoomId} />
       </div>
 
       <div className="relative rounded-lg border">

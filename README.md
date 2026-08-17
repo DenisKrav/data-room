@@ -68,6 +68,7 @@ erDiagram
     Folder ||--o{ Share : "can be shared as"
 
     File ||--o{ Share : "can be shared as"
+    File ||--o{ FileVersion : "upload history"
 
     Share ||--o{ ShareGrant : "grants (permissioned)"
 
@@ -106,6 +107,14 @@ erDiagram
         string name
         uuid folderId FK
         uuid dataRoomId FK
+        string storageKey "mirrors latest FileVersion"
+        string mimeType
+        bigint sizeBytes
+    }
+    FileVersion {
+        uuid id PK
+        uuid fileId FK
+        int version "unique per fileId"
         string storageKey
         string mimeType
         bigint sizeBytes
@@ -136,7 +145,7 @@ Not with a recursive query on every read. `Folder.fileCount`, `folderCount`, and
 
 **What changes when one Data Room holds 100,000 files?**
 - **Listing**: `Folder.getChildren` already uses **keyset pagination** on files (`WHERE (name, id) > (cursor)`, ordered by `name, id`, default page size 50) instead of `OFFSET`, so page N is exactly as cheap as page 1 — no scanning-and-discarding.
-- **Indexes**: `File` has `@@index([folderId])` (a folder's own file list) and `@@unique([folderId, name])` (also serves as the index that backs the pagination cursor and the name-conflict check). At 100k+ files, a `pg_trgm` GIN index on `File.name` would be the next step for the extra-credit search feature (substring search instead of a sequential scan).
+- **Indexes**: `File` has `@@index([folderId])` (a folder's own file list) and `@@unique([folderId, name])` (also serves as the index that backs the pagination cursor and the name-conflict check). The extra-credit name search is backed by a `pg_trgm` `GIN` index on `File.name`, so `ILIKE '%substring%'` at 100k+ files stays index-backed instead of a sequential scan — implemented, not just planned (see Extra Credit below).
 - **Path/ancestry**: `Folder.path` is a `String[]`; at real scale I'd add a GIN index on it (`@@index([path], type: Gin)`) so "does this share cover folder X" and cascade-delete's descendant lookup (`path has X`) stay index-backed instead of falling back to a sequential scan.
 - **Aggregates**: already O(depth) per write regardless of item count (see above), so 100k files doesn't change the cost of *displaying* a size/count — only the one-time cost of the migration that would backfill them if they didn't already exist.
 
@@ -178,9 +187,13 @@ npm run dev                   # http://localhost:3000
 
 ## Extra credit
 
-Not implemented — the brief asked to time-box and only attempt these if time remained after the core requirements; core scope (including the sharing edge cases and the fixes found during manual QA) filled the available time.
-- Search/filtering by file name
-- File versioning on name conflicts (current behavior: auto-suffix, no version history)
+Both implemented.
+
+**Search and filtering by file name across the Data Room.** A search box in the folder browser toolbar queries `GET /data-rooms/:id/files/search?q=`, matching file names anywhere in the room (not just the current folder) via a case-insensitive substring match, debounced 300ms client-side. Each result shows its full folder path (e.g. "Acme Room / Legal / Contracts") so you know where to find it, and clicking one jumps straight to the file page. Backed by a `GIN` trigram index (`pg_trgm`) on `File.name` rather than a plain B-tree, so `ILIKE '%substring%'` stays index-backed as the table grows — this is the concrete implementation of the search scaling answer above, not just a description of it.
+
+**File versioning on name conflicts.** Uploading a file whose name exactly matches an existing file in the same folder no longer creates a separate auto-suffixed copy — it creates a new version of that file (`FileVersion`, one row per upload, keyed by `(fileId, version)`). The file's own row always mirrors the latest version (name, size, storage key), so every existing read path (folder listing, view, aggregates) needed no changes; a version-history menu on the file page lets you switch back to view (not restore) any older version, each served from its own still-intact blob in storage. Deleting the file removes every version's blob, not just the current one. This behavior is specific to *uploading into the same slot* — renaming or moving a file into a colliding name still auto-suffixes, since that's a distinct file that happens to share a name, not a re-upload of the same one.
+
+A pre-existing-file backfill migration gives every file that predates this feature a synthetic "version 1" pointing at its current blob, so the delete-all-versions cleanup path has no gap for files uploaded before versioning existed.
 
 ## Where AI was used
 
@@ -190,5 +203,6 @@ Beyond initial generation, AI was used for:
 - **Live verification, not just code generation.** Every feature (auth rotation/theft-detection, cascade delete with aggregate rebalancing, conflict-safe rename, public/permissioned sharing, read-only UI enforcement) was exercised against the real Supabase-backed dev server via `curl` and against a real browser via Playwright — including multi-context scenarios (owner + invitee + anonymous visitor) — rather than assumed correct from reading the code.
 - **Bug-finding through actual usage**, not just review: browser testing surfaced a wrong font-variable binding, invalid nested HTML in the breadcrumb component, a read-only user still seeing owner-only controls, a file shared without its folder being unreachable, and a nav highlight that didn't reflect which section a shared resource belonged to. Each was root-caused and fixed, then re-verified with a fresh Playwright pass.
 - **Deployment troubleshooting**: diagnosing a Prisma "invalid connection string" error (stray characters from a copy-paste) and a Render build failure (`NODE_ENV=production` causing `npm install` to skip `devDependencies`, where the Nest CLI lives) from pasted dashboard logs.
+- **Catching a destructive suggestion before running it**: enabling Prisma's `postgresqlExtensions` preview feature (while adding the `pg_trgm` search index) made `prisma migrate dev` start tracking every Postgres extension in the live Supabase database, including ones Supabase installs by default that this project never created. Prisma's own response to that mismatch was to propose a full schema reset — which would have dropped all production data. That suggestion was not run; the preview feature was reverted, the index was declared a different way that doesn't require it, and the incident is now a documented gotcha in `CLAUDE.md` so it isn't rediscovered the hard way.
 
 All product and architecture decisions — tech stack, auth model, sharing model, when to unify vs. keep separate, what counts as in-scope for a take-home — were made by the requester; AI proposed options and trade-offs where a decision was needed and implemented the result.

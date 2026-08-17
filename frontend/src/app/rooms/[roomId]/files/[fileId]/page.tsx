@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft } from 'lucide-react';
-import { getFile, getFileViewUrl } from '@/lib/api/files';
+import { getFile, getFileVersionViewUrl, getFileViewUrl } from '@/lib/api/files';
 import { useSectionStore } from '@/lib/section-store';
 import { AppShell } from '@/components/layout/app-shell';
+import { VersionHistoryMenu } from '@/components/browser/version-history-menu';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 
@@ -20,6 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 export default function FilePage() {
   const params = useParams<{ roomId: string; fileId: string }>();
   const router = useRouter();
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
 
   const fileQuery = useQuery({
     queryKey: ['file', params.fileId],
@@ -28,8 +31,11 @@ export default function FilePage() {
   });
 
   const urlQuery = useQuery({
-    queryKey: ['file-view-url', params.fileId],
-    queryFn: () => getFileViewUrl(params.fileId),
+    queryKey: ['file-view-url', params.fileId, selectedVersion],
+    queryFn: () =>
+      selectedVersion === null
+        ? getFileViewUrl(params.fileId)
+        : getFileVersionViewUrl(params.fileId, selectedVersion),
     enabled: fileQuery.isSuccess,
   });
 
@@ -48,14 +54,40 @@ export default function FilePage() {
 
   return (
     <AppShell>
-      <div className="mb-4 flex items-center gap-2">
-        <Button variant="ghost" size="icon" onClick={goBack}>
-          <ArrowLeft className="size-4" />
-        </Button>
+      <div className="mb-4 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <Button variant="ghost" size="icon" onClick={goBack}>
+            <ArrowLeft className="size-4" />
+          </Button>
+          {fileQuery.data && (
+            <h1 className="truncate text-lg font-medium">{fileQuery.data.name}</h1>
+          )}
+        </div>
         {fileQuery.data && (
-          <h1 className="truncate text-lg font-medium">{fileQuery.data.name}</h1>
+          <VersionHistoryMenu
+            fileId={params.fileId}
+            selectedVersion={selectedVersion}
+            onSelect={setSelectedVersion}
+          />
         )}
       </div>
+
+      {selectedVersion !== null && (
+        <div className="mb-3 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+          <Badge variant="outline" className="border-amber-400 text-amber-800 dark:text-amber-200">
+            Version {selectedVersion}
+          </Badge>
+          <span>You&apos;re viewing an older version of this file.</span>
+          <Button
+            variant="link"
+            size="sm"
+            className="h-auto p-0 text-amber-900 underline dark:text-amber-200"
+            onClick={() => setSelectedVersion(null)}
+          >
+            Back to latest
+          </Button>
+        </div>
+      )}
 
       {fileQuery.isLoading && <Skeleton className="h-[75vh] w-full rounded-lg" />}
 

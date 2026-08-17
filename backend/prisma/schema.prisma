@@ -102,11 +102,14 @@ model File {
   dataRoomId String
   dataRoom   DataRoom @relation(fields: [dataRoomId], references: [id], onDelete: Cascade)
 
+  // Mirrors the latest FileVersion — kept denormalized so listing/viewing a file
+  // never needs a join, while FileVersion holds the full upload history.
   storageKey String // object path inside the Supabase Storage bucket
   mimeType   String
   sizeBytes  BigInt
 
-  shares    Share[]
+  versions FileVersion[]
+  shares   Share[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -114,7 +117,38 @@ model File {
   @@unique([folderId, name])
   @@index([folderId])
   @@index([dataRoomId])
+  // A GIN trigram index on `name` also exists in the database (created via
+  // raw SQL in the search_index_and_backfill migration, not declared here)
+  // so ILIKE '%substring%' name search stays index-backed as the table
+  // grows — see README "how it scales". It's intentionally NOT expressed
+  // via @@index(... type: Gin) because that requires the
+  // `postgresqlExtensions` preview feature, which makes `prisma migrate
+  // dev` track every Postgres extension in the database — including ones
+  // Supabase installs by default — and prompts a full destructive reset
+  // the moment it sees one it didn't create. Do not enable that preview
+  // feature on this project; hand-review any migration touching this index.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "files_name_trgm_idx")
   @@map("files")
+}
+
+// Uploading a file whose name exactly matches an existing file in the same
+// folder creates a new version of that file instead of a separate "(1)"
+// file — see README "how it scales" / extra credit notes.
+model FileVersion {
+  id      String @id @default(uuid())
+  fileId  String
+  file    File   @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  version Int
+
+  storageKey String
+  mimeType   String
+  sizeBytes  BigInt
+
+  createdAt DateTime @default(now())
+
+  @@unique([fileId, version])
+  @@index([fileId])
+  @@map("file_versions")
 }
 
 enum ShareResourceType {

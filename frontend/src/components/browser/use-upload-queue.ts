@@ -11,6 +11,8 @@ export interface UploadItem {
   progress: number;
   status: 'uploading' | 'done' | 'error';
   error?: string;
+  isNewVersion?: boolean;
+  version?: number;
 }
 
 export function useUploadQueue(folderId: string) {
@@ -24,9 +26,18 @@ export function useUploadQueue(folderId: string) {
   const runUpload = useCallback(
     async (id: string, file: File) => {
       try {
-        await uploadFile(folderId, file, (percent) => patch(id, { progress: percent }));
-        patch(id, { status: 'done', progress: 100 });
+        const result = await uploadFile(folderId, file, (percent) => patch(id, { progress: percent }));
+        patch(id, {
+          status: 'done',
+          progress: 100,
+          isNewVersion: result.isNewVersion,
+          version: result.version,
+        });
         queryClient.invalidateQueries({ queryKey: ['folder-children', folderId] });
+        if (result.isNewVersion) {
+          queryClient.invalidateQueries({ queryKey: ['file-versions', result.id] });
+          queryClient.invalidateQueries({ queryKey: ['file', result.id] });
+        }
       } catch (err) {
         patch(id, { status: 'error', error: getApiErrorMessage(err, 'Upload failed') });
       }

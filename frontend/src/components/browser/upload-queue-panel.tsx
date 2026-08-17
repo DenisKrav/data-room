@@ -40,6 +40,11 @@ export function UploadQueuePanel({ items, onRetry, onDismiss, onDismissAll }: Up
               {item.status === 'error' && (
                 <p className="mt-0.5 truncate text-xs text-destructive">{item.error}</p>
               )}
+              {item.status === 'done' && item.isNewVersion && (
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  Saved as version {item.version}
+                </p>
+              )}
             </div>
             {item.status === 'done' && <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />}
             {item.status === 'error' && (

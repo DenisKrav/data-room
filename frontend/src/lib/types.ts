@@ -41,6 +41,20 @@ export interface FileItem {
   canWrite?: boolean;
 }
 
+export interface FileVersion {
+  id: string;
+  fileId: string;
+  version: number;
+  mimeType: string;
+  sizeBytes: string;
+  createdAt: string;
+}
+
+export interface SearchResultFile extends FileItem {
+  /** e.g. "Acme Room / Legal / Contracts" — resolved ancestor names. */
+  folderPath: string;
+}
+
 export interface BreadcrumbItem {
   id: string;
   name: string;

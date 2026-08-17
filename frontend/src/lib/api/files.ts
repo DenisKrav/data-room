@@ -1,6 +1,11 @@
 import type { AxiosProgressEvent } from 'axios';
 import { api } from './client';
-import type { FileItem } from '../types';
+import type { FileItem, FileVersion, SearchResultFile } from '../types';
+
+export interface UploadResult extends FileItem {
+  isNewVersion: boolean;
+  version: number;
+}
 
 export function uploadFile(
   folderId: string,
@@ -12,7 +17,7 @@ export function uploadFile(
   formData.append('file', file);
 
   return api
-    .post<FileItem>(`/folders/${folderId}/files`, formData, {
+    .post<UploadResult>(`/folders/${folderId}/files`, formData, {
       signal,
       onUploadProgress: (event: AxiosProgressEvent) => {
         if (!onProgress || !event.total) return;
@@ -32,6 +37,18 @@ export function getFileViewUrl(id: string) {
     .then((r) => r.data);
 }
 
+export function getFileVersions(id: string) {
+  return api.get<FileVersion[]>(`/files/${id}/versions`).then((r) => r.data);
+}
+
+export function getFileVersionViewUrl(id: string, version: number) {
+  return api
+    .get<{ url: string; name: string; mimeType: string; version: number }>(
+      `/files/${id}/versions/${version}/view-url`,
+    )
+    .then((r) => r.data);
+}
+
 export function renameFile(id: string, name: string) {
   return api.patch<FileItem>(`/files/${id}`, { name }).then((r) => r.data);
 }
@@ -42,4 +59,10 @@ export function moveFile(id: string, targetFolderId: string) {
 
 export function deleteFile(id: string) {
   return api.delete(`/files/${id}`);
+}
+
+export function searchFiles(dataRoomId: string, q: string) {
+  return api
+    .get<SearchResultFile[]>(`/data-rooms/${dataRoomId}/files/search`, { params: { q } })
+    .then((r) => r.data);
 }

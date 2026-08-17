@@ -6,8 +6,10 @@ import {
   HttpCode,
   HttpStatus,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -16,6 +18,7 @@ import { memoryStorage } from 'multer';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/types/jwt-payload.type';
 import { MoveFileDto } from './dto/move-file.dto';
+import { SearchFilesQueryDto } from './dto/search-files-query.dto';
 import { UpdateFileDto } from './dto/update-file.dto';
 import { FilesService } from './files.service';
 
@@ -40,6 +43,15 @@ export class FilesController {
     return this.filesService.upload(user.id, folderId, file);
   }
 
+  @Get('data-rooms/:dataRoomId/files/search')
+  search(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('dataRoomId') dataRoomId: string,
+    @Query() query: SearchFilesQueryDto,
+  ) {
+    return this.filesService.searchInDataRoom(user.id, dataRoomId, query);
+  }
+
   @Get('files/:id')
   getOne(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     return this.filesService.getOne(user.id, id);
@@ -48,6 +60,20 @@ export class FilesController {
   @Get('files/:id/view-url')
   getViewUrl(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
     return this.filesService.getViewUrl(user.id, id);
+  }
+
+  @Get('files/:id/versions')
+  listVersions(@CurrentUser() user: AuthenticatedUser, @Param('id') id: string) {
+    return this.filesService.listVersions(user.id, id);
+  }
+
+  @Get('files/:id/versions/:version/view-url')
+  getVersionViewUrl(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('version', ParseIntPipe) version: number,
+  ) {
+    return this.filesService.getVersionViewUrl(user.id, id, version);
   }
 
   @Patch('files/:id')
